@@ -307,6 +307,38 @@ If signal-cli is not in your $PATH, provide the absolute path here."
          ((file-exists-p path-no-ext) path-no-ext)
          (t nil))))))
 
+(defun signel-guess-image-type (file)
+  "Read the first few bytes of FILE to determine image type (png, webp, gif)."
+  (with-temp-buffer
+    (set-buffer-multibyte nil)
+    (insert-file-contents-literally file nil 0 12)
+    (goto-char (point-min))
+    (cond
+     ((looking-at "\x89PNG") 'png)
+     ((looking-at "GIF8") 'gif)
+     ((and (looking-at "RIFF")
+           (ignore-errors (forward-char 8) (looking-at "WEBP")))
+      'webp)
+     (t nil))))
+
+(defun signel-convert-apng-to-gif (file)
+  "Convert APNG FILE to a temporary GIF using ImageMagick `convert.
+Returns the path to the temporary GIF."
+  (let ((tmp-gif (make-temp-file "signel-sticker-" nil ".gif")))
+    (if (executable-find "convert")
+        (with-temp-buffer
+          ;; Run: convert apng:INPUT -coalesce gif:OUTPUT
+          ;; -coalesce removes frame optimizations that cause "ghosting" in Emacs
+          (if (eq 0 (call-process "convert" nil nil nil
+                                  (concat "apng:" file)
+                                  "-coalesce"
+                                  tmp-gif))
+              tmp-gif
+            (signel-log "Failed to convert APNG to GIF. 'convert' exit code non-zero.")
+            nil))
+      (signel-log "ImageMagick 'convert' not found. Cannot animate APNG.")
+      nil)))
+
 (defun signel-insert-media (attachments sticker)
   "Insert buttons or inline images for media and stickers."
   ;; 1. Handle Stickers
@@ -320,17 +352,30 @@ If signal-cli is not in your $PATH, provide the absolute path here."
 
       (insert "\n")
       (cond
-       ;; Try to create image (force type if extension missing)
-       (file
-        (let ((image (or (create-image file nil nil :max-width 150)       ; Auto-detect
-                         (create-image file 'png nil :max-width 150)      ; Force PNG (Handles APNG)
-                         (create-image file 'webp nil :max-width 150))))  ; Force WebP
+       ((and file (file-exists-p file))
+        (let* ((type (signel-guess-image-type file))
+               (final-file file)
+               (final-type type))
 
-          (if image
-              (insert-image image)
-            ;; Fallback text if rendering fails
-            (insert (propertize (format "[Sticker %s (Render Failed)]" emoji)
-                                'face 'font-lock-warning-face)))))
+          ;; CONVERSION LOGIC: If PNG (APNG), try to convert to GIF
+          (when (and (eq type 'png) (executable-find "convert"))
+            (let ((gif (signel-convert-apng-to-gif file)))
+              (when gif
+                (setq final-file gif)
+                (setq final-type 'gif))))
+
+          ;; Load the image (original or converted GIF)
+          (let ((image (create-image final-file final-type nil :max-width 150)))
+            (if image
+                (progn
+                  (insert-image image)
+                  (when (fboundp 'image-animate)
+                    (image-animate image nil t))) ;; Loop forever
+
+              ;; Render failed
+              (insert (propertize (format "[Sticker %s (Render Failed)]" emoji)
+                                  'face 'font-lock-warning-face))))))
+
        ;; File not found
        (t
         (insert (propertize (format "[Sticker %s]" emoji)
@@ -349,7 +394,9 @@ If signal-cli is not in your $PATH, provide the absolute path here."
            ;; A: Inline Image
            ((and path (string-prefix-p "image/" type) (file-exists-p path))
             (let ((image (create-image path nil nil :max-width 400)))
-              (insert-image image)))
+              (insert-image image)
+              (when (and (fboundp 'image-animate) (image-multi-frame-p image))
+                (image-animate image nil t))))
 
            ;; B: File Button
            ((and path (file-exists-p path))
@@ -364,7 +411,10 @@ If signal-cli is not in your $PATH, provide the absolute path here."
                    (exists (file-exists-p std-path)))
               (if exists
                   (if (string-prefix-p "image/" type)
-                      (insert-image (create-image std-path nil nil :max-width 400))
+                      (let ((image (create-image std-path nil nil :max-width 400)))
+                        (insert-image image)
+                        (when (and (fboundp 'image-animate) (image-multi-frame-p image))
+                          (image-animate image nil t)))
                     (insert-button (format "[File: %s]" name)
                                    'action (lambda (_) (browse-url-of-file std-path))
                                    'face 'link))
