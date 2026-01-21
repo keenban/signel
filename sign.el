@@ -4,10 +4,10 @@
 
 ;; Author: Keenan Salandy <keenan@salandy.dev>
 ;; Maintainer: Keenan Salandy <keenan@salandy.dev>
+;; URL: https://github.com/keenban/signel
 ;; Version: 0.1.0
 ;; Package-Requires: ((emacs "27.1"))
 ;; Keywords: comm, signal, chat, external
-;; URL: https://github.com/keenban/signel
 
 ;; This program is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
