@@ -1,0 +1,80 @@
+* Sign.el
+
+Signel is an Emacs interface for [[https://signal.org][Signal]]. It communicates with a running
+~signal-cli~ daemon via JSON-RPC to send and receive messages asynchronously.
+
+** Features
+
+- *Chat Buffers*: Read-only history with a guarded input prompt.
+- *Media Support*: Renders inline images and attachments.
+- *Animated Stickers*: Automatically converts APNG and WebP stickers to GIF for playback in Emacs.
+- *Dashboard*: Overview of active conversations.
+- *Notifications*: Native desktop notifications on new messages.
+
+** Dependencies
+
+1. *Emacs 27.1+*
+2. *[[https://github.com/AsamK/signal-cli][signal-cli]]*: Must be installed and available in your ~$PATH~.
+3. *ImageMagick* (Optional): The ~convert~ command is required to render animated stickers.
+
+** Setup
+
+Before running Sign.el, you must link or register your account using the command line.
+
+*** Example (Linking a new device)
+
+#+begin_src bash
+signal-cli link -n "emacs-client" | xargs -n 1 qrencode -t utf8
+#+end_src
+
+** Installation
+
+Clone the repository and add it to your load path.
+
+*** use-package
+
+#+begin_src elisp
+(use-package signel
+  :load-path "~/.emacs.d/site-lisp/signel" ;; Adjust path as needed
+  :config
+  ;; REQUIRED: Your registered phone number
+  (setq signel-account "+15551234567")
+
+  ;; Optional: If signal-cli is not in your $PATH
+  ;; (setq signel-cli-program "/usr/local/bin/signal-cli")
+)
+#+end_src
+
+** Usage
+
+- Start the background process:
+  ~M-x signel-start~
+
+- Open the conversation list:
+  ~M-x signel-dashboard~
+
+- Open a specific chat directly:
+  ~M-x signel-chat~
+
+*** Keybindings
+
+**** In Chat Buffers
+
+| Key       | Command              | Action       |
+|-----------+----------------------+--------------|
+| ~RET~     | ~signel-send-input~  | Send message |
+| ~C-c C-c~ | ~signel-send-input~  | Send message |
+| ~C-c C-a~ | ~signel-attach-file~ | Attach file  |
+
+**** In Dashboard
+
+| Key   | Command                       | Action             |
+|-------+-------------------------------+--------------------|
+| ~RET~ | ~signel-dashboard-open-entry~ | Open selected chat |
+| ~n~   | ~forward-button~              | Next chat          |
+| ~p~   | ~backward-button~             | Previous chat      |
+| ~g~   | ~signel-dashboard-refresh~    | Refresh list       |
+
+** License
+
+GPLv3
