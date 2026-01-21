@@ -37,7 +37,7 @@
 (require 'image)
 
 ;; -----------------------------------------------------------------------------
-;; 1. CONFIGURATION
+;; Configuration
 ;; -----------------------------------------------------------------------------
 
 (defgroup signel nil
@@ -107,7 +107,7 @@ If signal-cli is not in your $PATH, provide the absolute path here."
   "Set of currently active chat IDs.")
 
 ;; -----------------------------------------------------------------------------
-;; 2. LOGGING & DEBUGGING
+;; Logging
 ;; -----------------------------------------------------------------------------
 
 (defun signel-log (fmt &rest args)
@@ -125,7 +125,7 @@ If signal-cli is not in your $PATH, provide the absolute path here."
   (display-buffer (get-buffer-create "*signel-log*")))
 
 ;; -----------------------------------------------------------------------------
-;; 3. PROCESS INFRASTRUCTURE
+;; Process Management
 ;; -----------------------------------------------------------------------------
 
 ;;;###autoload
@@ -176,7 +176,7 @@ If signal-cli is not in your $PATH, provide the absolute path here."
     id))
 
 ;; -----------------------------------------------------------------------------
-;; 4. PARSING & DISPATCH
+;; Parsing & Dispatch
 ;; -----------------------------------------------------------------------------
 
 (defvar signel-partial-line "")
@@ -276,7 +276,7 @@ If signal-cli is not in your $PATH, provide the absolute path here."
             (setq mode-line-process (format " [%s...]" (or source-name source)))))))))
 
 ;; -----------------------------------------------------------------------------
-;; 5. MEDIA & STICKERS
+;; Media & Stickers
 ;; -----------------------------------------------------------------------------
 
 (defun signel-find-sticker (pack-id sticker-id)
@@ -358,7 +358,7 @@ If signal-cli is not in your $PATH, provide the absolute path here."
                                'face 'font-lock-comment-face))))))))))
 
 ;; -----------------------------------------------------------------------------
-;; 6. BUFFER & UI MANAGEMENT
+;; Buffer & UI Management
 ;; -----------------------------------------------------------------------------
 
 (defvar-local signel-chat-id nil)
@@ -447,7 +447,7 @@ If signal-cli is not in your $PATH, provide the absolute path here."
       (signel-draw-prompt))))
 
 ;; -----------------------------------------------------------------------------
-;; 7. COMMANDS
+;; Interactive Commands
 ;; -----------------------------------------------------------------------------
 
 (defun signel-send-input ()
@@ -502,7 +502,7 @@ If signal-cli is not in your $PATH, provide the absolute path here."
     (message "Chat opened.")))
 
 ;; -----------------------------------------------------------------------------
-;; 8. DASHBOARD
+;; Dashboard
 ;; -----------------------------------------------------------------------------
 
 (defvar signel-dashboard-mode-map
