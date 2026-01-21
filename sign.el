@@ -3,6 +3,7 @@
 ;; Copyright (C) 2026 Free Software Foundation, Inc.
 
 ;; Author: Keenan Salandy <keenan@salandy.dev>
+;; Maintainer: Keenan Salandy <keenan@salandy.dev>
 ;; Version: 0.1.0
 ;; Package-Requires: ((emacs "27.1"))
 ;; Keywords: comm, signal, chat, external
