@@ -21,12 +21,21 @@
 ;;; Commentary:
 
 ;; Sign.el provides a lightweight, text-based interface for Signal
-;; within Emacs. It communicates with a running 'signal-cli' daemon
+;; within Emacs. It communicates with a running `signal-cli' daemon
 ;; via JSON-RPC.
+
+;; Features:
+;; - Strict chat buffers (read-only history, guarded prompt).
+;; - Inline image rendering.
+;; - Sticker support (APNG->GIF conversion for animation).
+;; - Auto-refreshing dashboard of active chats.
+;; - Native Emacs desktop notifications.
 
 ;; Prerequisites:
 ;; 1. signal-cli installed and in $PATH.
 ;; 2. A registered/linked Signal account.
+;; 3. For animated stickers: `imagemagick' (specifically the `convert' command)
+;;    must be available in your PATH.
 
 ;;; Code:
 
@@ -36,9 +45,7 @@
 (require 'button)
 (require 'image)
 
-;; -----------------------------------------------------------------------------
-;; Configuration
-;; -----------------------------------------------------------------------------
+;;; Configuration
 
 (defgroup signel nil
   "Signal client for Emacs using signal-cli."
@@ -48,48 +55,40 @@
 (defcustom signel-account nil
   "The registered Signal phone number (e.g. +15550000000).
 This must match the account registered with signal-cli."
-  :type '(choice (const :tag "Not Set" nil) string)
-  :group 'signel)
+  :type '(choice (const :tag "Not Set" nil) string))
 
 (defcustom signel-cli-program "signal-cli"
   "Path to the signal-cli executable.
-If signal-cli is not in your $PATH, provide the absolute path here."
-  :type 'string
-  :group 'signel)
+If signal-cli is not in your `exec-path', provide the absolute path here."
+  :type 'string)
 
 (defcustom signel-prompt "> "
   "The prompt string displayed in chat buffers."
-  :type 'string
-  :group 'signel)
+  :type 'string)
 
 (defcustom signel-auto-open-buffer t
   "If non-nil, automatically display the chat buffer when a message arrives."
-  :type 'boolean
-  :group 'signel)
+  :type 'boolean)
 
-;; Faces
+;;; Faces
 
 (defface signel-my-msg-face
   '((t :inherit font-lock-function-name-face :weight bold))
-  "Face applied to your own messages."
-  :group 'signel)
+  "Face applied to your own messages.")
 
 (defface signel-other-msg-face
   '((t :inherit font-lock-variable-name-face :weight bold))
-  "Face applied to messages from other users."
-  :group 'signel)
+  "Face applied to messages from other users.")
 
 (defface signel-timestamp-face
   '((t :inherit shadow))
-  "Face for message timestamps."
-  :group 'signel)
+  "Face for message timestamps.")
 
 (defface signel-error-face
   '((t :inherit error))
-  "Face for error messages."
-  :group 'signel)
+  "Face for error messages.")
 
-;; Internal State
+;;; Internal State
 
 (defvar signel-process-name "signal-rpc"
   "Internal name for the signal-cli process.")
@@ -106,38 +105,31 @@ If signal-cli is not in your $PATH, provide the absolute path here."
 (defvar signel-active-chats (make-hash-table :test 'equal)
   "Set of currently active chat IDs.")
 
-;; -----------------------------------------------------------------------------
-;; Logging
-;; -----------------------------------------------------------------------------
+;;; Logging
 
 (defun signel-log (fmt &rest args)
   "Log debug info to *signel-log*."
-  (let ((buf (get-buffer-create "*signel-log*")))
-    (with-current-buffer buf
-      (goto-char (point-max))
-      (insert (format-time-string "[%H:%M:%S] "))
-      (insert (apply #'format fmt args))
-      (insert "\n"))))
+  (with-current-buffer (get-buffer-create "*signel-log*")
+    (goto-char (point-max))
+    (insert (format-time-string "[%H:%M:%S] "))
+    (insert (apply #'format fmt args))
+    (insert "\n")))
 
 (defun signel-toggle-log ()
-  "Show the debug log."
+  "Display the debug log buffer."
   (interactive)
   (display-buffer (get-buffer-create "*signel-log*")))
 
-;; -----------------------------------------------------------------------------
-;; Process Management
-;; -----------------------------------------------------------------------------
+;;; Process Infrastructure
 
 ;;;###autoload
 (defun signel-start ()
   "Start the signal-cli JSON-RPC process."
   (interactive)
   (unless signel-account
-    (user-error "Variable `signel-account' is not set. Please configure it"))
-
+    (user-error "Variable `signel-account' is not set"))
   (when (get-process signel-process-name)
     (delete-process signel-process-name))
-
   (let ((proc (make-process
                :name signel-process-name
                :buffer " *signel-stderr*"
@@ -157,39 +149,34 @@ If signal-cli is not in your $PATH, provide the absolute path here."
     (message "Signel service stopped.")))
 
 (defun signel-send-rpc (method params &optional target-buffer)
-  "Send a JSON-RPC payload."
+  "Send a JSON-RPC payload with METHOD and PARAMS.
+If TARGET-BUFFER is non-nil, map the request ID to that buffer for error handling."
   (unless (get-process signel-process-name)
     (error "Signel service not running. M-x signel-start"))
-
   (let* ((id (cl-incf signel-rpc-id-counter))
          (req `((jsonrpc . "2.0")
                 (method . ,method)
                 (params . ,params)
                 (id . ,id)))
          (json-str (json-encode req)))
-
     (when target-buffer
       (puthash id (buffer-name target-buffer) signel-request-buffer-map))
-
     (signel-log "SEND: %s" json-str)
     (process-send-string signel-process-name (concat json-str "\n"))
     id))
 
-;; -----------------------------------------------------------------------------
-;; Parsing & Dispatch
-;; -----------------------------------------------------------------------------
+;;; Parsing & Dispatch
 
 (defvar signel-partial-line "")
 
 (defun signel-process-filter (_proc string)
-  "Accumulate output from PROC and parse complete JSON objects from STRING."
+  "Accumulate output from _PROC and parse complete JSON objects from STRING."
   (setq signel-partial-line (concat signel-partial-line string))
   (let ((lines (split-string signel-partial-line "\n")))
     (if (string-suffix-p "\n" signel-partial-line)
         (setq signel-partial-line "")
       (setq signel-partial-line (car (last lines)))
       (setq lines (butlast lines)))
-
     (dolist (line lines)
       (setq line (string-trim line))
       ;; signal-cli may emit non-JSON log lines; ignore them
@@ -201,6 +188,7 @@ If signal-cli is not in your $PATH, provide the absolute path here."
           (error (signel-log "JSON Error: %s" err)))))))
 
 (defun signel-process-sentinel (_proc event)
+  "Log process EVENT for debugging."
   (signel-log "Process Event: %s" event))
 
 (defun signel-dispatch (json)
@@ -214,7 +202,7 @@ If signal-cli is not in your $PATH, provide the absolute path here."
      (error-obj (signel-handle-error id error-obj)))))
 
 (defun signel-handle-error (id error-obj)
-  "Handle RPC errors."
+  "Handle RPC errors for request ID using ERROR-OBJ."
   (let* ((buf-name (gethash id signel-request-buffer-map))
          (msg (alist-get 'message error-obj)))
     (signel-log "RPC Error [%s]: %s" id msg)
@@ -223,7 +211,7 @@ If signal-cli is not in your $PATH, provide the absolute path here."
         (signel-insert-system-msg (format "ERROR: %s" msg) 'signel-error-face)))))
 
 (defun signel-handle-receive (params)
-  "Handle new messages, attachments, stickers, and sync events."
+  "Handle new messages, attachments, stickers, and sync events from PARAMS."
   (let* ((envelope (alist-get 'envelope params))
          (source (or (alist-get 'sourceNumber envelope) (alist-get 'source envelope)))
          (source-name (alist-get 'sourceName envelope))
@@ -249,14 +237,12 @@ If signal-cli is not in your $PATH, provide the absolute path here."
 
             (when (or msg-text attachments sticker)
               (signel-insert-msg chat-id sender msg-text attachments sticker nil)
-
               (let ((notify-body (cond (msg-text msg-text)
                                        (sticker "[Sticker]")
                                        (attachments "[Attachment]")
                                        (t "New Message"))))
                 (notifications-notify :title (format "Signel: %s" sender)
                                       :body notify-body))
-
               (when signel-auto-open-buffer
                 (display-buffer (signel-get-buffer chat-id))))))
 
@@ -275,16 +261,13 @@ If signal-cli is not in your $PATH, provide the absolute path here."
           (with-current-buffer (signel-get-buffer chat-id)
             (setq mode-line-process (format " [%s...]" (or source-name source)))))))))
 
-;; -----------------------------------------------------------------------------
-;; Media & Stickers
-;; -----------------------------------------------------------------------------
+;;; Media & Stickers
 
 (defun signel-find-sticker (pack-id sticker-id)
-  "Find the local sticker file using manifest.json if available."
+  "Find the local sticker file for PACK-ID and STICKER-ID using manifest.json."
   (let* ((base-dir (expand-file-name "~/.local/share/signal-cli/stickers/"))
          (pack-dir (expand-file-name pack-id base-dir))
          (manifest-file (expand-file-name "manifest.json" pack-dir)))
-
     (if (file-exists-p manifest-file)
         ;; METHOD 1: Use manifest.json (Accurate)
         (condition-case nil
@@ -294,11 +277,9 @@ If signal-cli is not in your $PATH, provide the absolute path here."
                    (stickers (alist-get 'stickers manifest))
                    (sticker-info (seq-find (lambda (s) (= (alist-get 'id s) sticker-id)) stickers))
                    (file-name (alist-get 'file sticker-info)))
-
               (when file-name
                 (expand-file-name file-name pack-dir)))
           (error nil))
-
       ;; METHOD 2: Fallback (Guessing)
       (let* ((path-no-ext (expand-file-name (number-to-string sticker-id) pack-dir))
              (path-webp (concat path-no-ext ".webp")))
@@ -322,7 +303,7 @@ If signal-cli is not in your $PATH, provide the absolute path here."
      (t nil))))
 
 (defun signel-convert-apng-to-gif (file)
-  "Convert APNG FILE to a temporary GIF using ImageMagick `convert.
+  "Convert APNG FILE to a temporary GIF using ImageMagick `convert'.
 Returns the path to the temporary GIF."
   (let ((tmp-gif (make-temp-file "signel-sticker-" nil ".gif")))
     (if (executable-find "convert")
@@ -334,13 +315,13 @@ Returns the path to the temporary GIF."
                                   "-coalesce"
                                   tmp-gif))
               tmp-gif
-            (signel-log "Failed to convert APNG to GIF. 'convert' exit code non-zero.")
+            (signel-log "Failed to convert APNG to GIF. `convert' exit code non-zero.")
             nil))
-      (signel-log "ImageMagick 'convert' not found. Cannot animate APNG.")
+      (signel-log "ImageMagick `convert' not found. Cannot animate APNG.")
       nil)))
 
 (defun signel-insert-media (attachments sticker)
-  "Insert buttons or inline images for media and stickers."
+  "Insert buttons or inline images for ATTACHMENTS and STICKER with animation support."
   ;; 1. Handle Stickers
   (when sticker
     (let* ((pack-id (alist-get 'packId sticker))
@@ -349,21 +330,18 @@ Returns the path to the temporary GIF."
            (file (if (and pack-id sticker-id)
                      (signel-find-sticker pack-id sticker-id)
                    nil)))
-
       (insert "\n")
       (cond
        ((and file (file-exists-p file))
         (let* ((type (signel-guess-image-type file))
                (final-file file)
                (final-type type))
-
           ;; CONVERSION LOGIC: If PNG (APNG), try to convert to GIF
           (when (and (eq type 'png) (executable-find "convert"))
             (let ((gif (signel-convert-apng-to-gif file)))
               (when gif
                 (setq final-file gif)
                 (setq final-type 'gif))))
-
           ;; Load the image (original or converted GIF)
           (let ((image (create-image final-file final-type nil :max-width 150)))
             (if image
@@ -371,11 +349,9 @@ Returns the path to the temporary GIF."
                   (insert-image image)
                   (when (fboundp 'image-animate)
                     (image-animate image nil t))) ;; Loop forever
-
               ;; Render failed
               (insert (propertize (format "[Sticker %s (Render Failed)]" emoji)
                                   'face 'font-lock-warning-face))))))
-
        ;; File not found
        (t
         (insert (propertize (format "[Sticker %s]" emoji)
@@ -388,7 +364,6 @@ Returns the path to the temporary GIF."
         (let* ((path (alist-get 'storedFilename att))
                (type (alist-get 'contentType att))
                (name (or (alist-get 'filename att) "attachment")))
-
           (insert "\n")
           (cond
            ;; A: Inline Image
@@ -397,14 +372,12 @@ Returns the path to the temporary GIF."
               (insert-image image)
               (when (and (fboundp 'image-animate) (image-multi-frame-p image))
                 (image-animate image nil t))))
-
            ;; B: File Button
            ((and path (file-exists-p path))
             (insert-button (format "[File: %s]" name)
                            'action (lambda (_) (browse-url-of-file path))
                            'face 'link
                            'help-echo (format "Type: %s\nPath: %s" type path)))
-
            ;; C: Missing/Not Downloaded
            (t
             (let* ((std-path (expand-file-name (format "~/.local/share/signal-cli/attachments/%s" (alist-get 'id att))))
@@ -422,9 +395,7 @@ Returns the path to the temporary GIF."
                                'action (lambda (_) (message "File not found at %s" std-path))
                                'face 'font-lock-comment-face))))))))))
 
-;; -----------------------------------------------------------------------------
-;; Buffer & UI Management
-;; -----------------------------------------------------------------------------
+;;; Buffer & UI Management
 
 (defvar-local signel-chat-id nil)
 
@@ -475,7 +446,9 @@ Returns the path to the temporary GIF."
                         'front-sticky '(read-only face)))))
 
 (defun signel-insert-msg (id name text attachments sticker is-me)
-  "Insert text and media into the buffer."
+  "Insert text and media into the buffer for chat ID.
+NAME is the sender, TEXT is the content, ATTACHMENTS and STICKER contain
+media data, and IS-ME is non-nil if the message is from the user."
   (with-current-buffer (signel-get-buffer id)
     (let ((inhibit-read-only t)
           (name-face (if is-me 'signel-my-msg-face 'signel-other-msg-face)))
@@ -484,24 +457,19 @@ Returns the path to the temporary GIF."
         (forward-line 0)
         (when (looking-at (regexp-quote signel-prompt))
           (delete-region (point) (point-max)))
-
-        ;; Header
         (insert (propertize (format-time-string "[%H:%M] " ) 'face 'signel-timestamp-face))
         (insert (propertize (concat "<" name "> ") 'face name-face))
-
-        ;; Body
         (when text (insert text))
         (when (or attachments sticker)
           (when text (insert "\n"))
           (signel-insert-media attachments sticker))
-
         (insert "\n")
         (signel-draw-prompt)))
     (let ((win (get-buffer-window (signel-get-buffer id))))
       (when win (set-window-point win (point-max))))))
 
 (defun signel-insert-system-msg (text face)
-  "Insert a system/error message."
+  "Insert a system message with TEXT using FACE."
   (let ((inhibit-read-only t))
     (save-excursion
       (goto-char (point-max))
@@ -511,64 +479,52 @@ Returns the path to the temporary GIF."
       (insert (propertize (concat "*** " text "\n") 'face face))
       (signel-draw-prompt))))
 
-;; -----------------------------------------------------------------------------
-;; Interactive Commands
-;; -----------------------------------------------------------------------------
+;;; Interactive Commands
 
 (defun signel-send-input ()
-  "Read input, clear buffer, send RPC."
+  "Send the input from the prompt to the current chat."
   (interactive)
   (let ((start (signel-prompt-start-pos))
         (end (point-max))
         (text ""))
-
     (setq text (string-trim (buffer-substring-no-properties start end)))
-
     (unless (string-empty-p text)
       (let ((inhibit-read-only t))
         (delete-region start end))
-
       (let ((is-group (not (string-prefix-p "+" signel-chat-id)))
             (params `((message . ,text))))
-
         (if is-group
             (push `(groupId . ,signel-chat-id) params)
           (push `(recipient . [,signel-chat-id]) params))
-
         (signel-send-rpc "send" params (current-buffer)))
-
-      ;; Insert local echo
       (signel-insert-msg signel-chat-id "Me" text nil nil t))))
 
 ;;;###autoload
 (defun signel-attach-file (file-path)
-  "Send a file attachment to the current chat."
+  "Send FILE-PATH as an attachment to the current chat."
   (interactive "fAttachment: ")
   (unless signel-chat-id
     (user-error "Not in a Signal chat buffer"))
-
   (let* ((full-path (expand-file-name file-path))
          (is-group (not (string-prefix-p "+" signel-chat-id)))
          (params `((attachments . [,full-path]))))
-
     (if is-group
         (push `(groupId . ,signel-chat-id) params)
       (push `(recipient . [,signel-chat-id]) params))
-
     (signel-send-rpc "send" params (current-buffer))
-    (signel-insert-msg signel-chat-id "Me" (format "[Sending: %s]" (file-name-nondirectory full-path)) nil nil t)))
+    (signel-insert-msg signel-chat-id "Me"
+                       (format "[Sending: %s]" (file-name-nondirectory full-path))
+                       nil nil t)))
 
 ;;;###autoload
 (defun signel-chat (recipient)
-  "Open a chat buffer."
+  "Open a chat buffer for RECIPIENT (phone number or group ID)."
   (interactive "sSignal Recipient (+Phone): ")
   (let ((buffer (signel-get-buffer recipient)))
     (switch-to-buffer buffer)
     (message "Chat opened.")))
 
-;; -----------------------------------------------------------------------------
-;; Dashboard
-;; -----------------------------------------------------------------------------
+;;; Dashboard
 
 (defvar signel-dashboard-mode-map
   (let ((map (make-sparse-keymap)))
@@ -577,12 +533,14 @@ Returns the path to the temporary GIF."
     (define-key map (kbd "n") #'forward-button)
     (define-key map (kbd "p") #'backward-button)
     (define-key map (kbd "g") #'signel-dashboard-refresh)
-    map))
+    map)
+  "Keymap for `signel-dashboard-mode'.")
 
 (define-derived-mode signel-dashboard-mode special-mode "Signel List"
-  "List of active Signal chats.")
+  "Major mode for the list of active Signal chats.")
 
 (defun signel-dashboard-draw ()
+  "Redraw the dashboard content."
   (let ((inhibit-read-only t))
     (erase-buffer)
     (insert "Active Chats:\n")
@@ -597,6 +555,7 @@ Returns the path to the temporary GIF."
              signel-active-chats)))
 
 (defun signel-dashboard-refresh ()
+  "Refresh the dashboard buffer."
   (interactive)
   (let ((buf (get-buffer "*Signel List*")))
     (when (buffer-live-p buf)
@@ -617,7 +576,7 @@ Returns the path to the temporary GIF."
     (switch-to-buffer buf)))
 
 (defun signel-dashboard-open-entry (&optional btn)
-  "Open chat for the button at point."
+  "Open chat for the button at point or BTN."
   (interactive)
   (let* ((button (or btn (button-at (point))))
          (id (and button (button-get button 'signel-id))))
