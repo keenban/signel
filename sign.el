@@ -107,7 +107,25 @@ If signal-cli is not in your $PATH, provide the absolute path here."
   "Set of currently active chat IDs.")
 
 ;; -----------------------------------------------------------------------------
-;; 2. PROCESS INFRASTRUCTURE
+;; 2. LOGGING & DEBUGGING
+;; -----------------------------------------------------------------------------
+
+(defun signel-log (fmt &rest args)
+  "Log debug info to *signel-log*."
+  (let ((buf (get-buffer-create "*signel-log*")))
+    (with-current-buffer buf
+      (goto-char (point-max))
+      (insert (format-time-string "[%H:%M:%S] "))
+      (insert (apply #'format fmt args))
+      (insert "\n"))))
+
+(defun signel-toggle-log ()
+  "Show the debug log."
+  (interactive)
+  (display-buffer (get-buffer-create "*signel-log*")))
+
+;; -----------------------------------------------------------------------------
+;; 3. PROCESS INFRASTRUCTURE
 ;; -----------------------------------------------------------------------------
 
 ;;;###autoload
@@ -128,6 +146,7 @@ If signal-cli is not in your $PATH, provide the absolute path here."
                :sentinel #'signel-process-sentinel
                :coding 'utf-8-unix)))
     (set-process-query-on-exit-flag proc nil)
+    (signel-log "Signel service started.")
     (message "Signel service started.")))
 
 (defun signel-stop ()
@@ -152,11 +171,12 @@ If signal-cli is not in your $PATH, provide the absolute path here."
     (when target-buffer
       (puthash id (buffer-name target-buffer) signel-request-buffer-map))
 
+    (signel-log "SEND: %s" json-str)
     (process-send-string signel-process-name (concat json-str "\n"))
     id))
 
 ;; -----------------------------------------------------------------------------
-;; 3. PARSING & DISPATCH
+;; 4. PARSING & DISPATCH
 ;; -----------------------------------------------------------------------------
 
 (defvar signel-partial-line "")
@@ -174,13 +194,14 @@ If signal-cli is not in your $PATH, provide the absolute path here."
       (setq line (string-trim line))
       ;; signal-cli may emit non-JSON log lines; ignore them
       (when (and (not (string-empty-p line)) (string-prefix-p "{" line))
+        (signel-log "RECV: %s" line)
         (condition-case err
             (let ((json (json-read-from-string line)))
               (signel-dispatch json))
-          (error (message "Signel JSON Error: %s" err)))))))
+          (error (signel-log "JSON Error: %s" err)))))))
 
 (defun signel-process-sentinel (_proc event)
-  (message "Signel process event: %s" event))
+  (signel-log "Process Event: %s" event))
 
 (defun signel-dispatch (json)
   "Dispatch JSON object to appropriate handler."
@@ -196,6 +217,7 @@ If signal-cli is not in your $PATH, provide the absolute path here."
   "Handle RPC errors."
   (let* ((buf-name (gethash id signel-request-buffer-map))
          (msg (alist-get 'message error-obj)))
+    (signel-log "RPC Error [%s]: %s" id msg)
     (when (and buf-name (get-buffer buf-name))
       (with-current-buffer buf-name
         (signel-insert-system-msg (format "ERROR: %s" msg) 'signel-error-face)))))
