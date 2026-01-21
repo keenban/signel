@@ -280,79 +280,94 @@ If signal-cli is not in your $PATH, provide the absolute path here."
 ;; -----------------------------------------------------------------------------
 
 (defun signel-find-sticker (pack-id sticker-id)
-  "Try to find the local file for a sticker."
+  "Find the local sticker file using manifest.json if available."
   (let* ((base-dir (expand-file-name "~/.local/share/signal-cli/stickers/"))
          (pack-dir (expand-file-name pack-id base-dir))
-         (path-no-ext (expand-file-name (number-to-string sticker-id) pack-dir))
-         (path-webp (concat path-no-ext ".webp")))
+         (manifest-file (expand-file-name "manifest.json" pack-dir)))
 
-    (signel-log "Checking sticker: %s OR %s" path-webp path-no-ext)
+    (if (file-exists-p manifest-file)
+        ;; METHOD 1: Use manifest.json (Accurate)
+        (condition-case nil
+            (let* ((json-object-type 'alist)
+                   (json-array-type 'list)
+                   (manifest (json-read-file manifest-file))
+                   (stickers (alist-get 'stickers manifest))
+                   (sticker-info (seq-find (lambda (s) (= (alist-get 'id s) sticker-id)) stickers))
+                   (file-name (alist-get 'file sticker-info)))
 
-    (cond
-     ((file-exists-p path-webp) path-webp)
-     ((file-exists-p path-no-ext) path-no-ext)
-     (t
-      (signel-log "Sticker not found on disk.")
-      nil))))
+              (when file-name
+                (let ((full-path (expand-file-name file-name pack-dir)))
+                  (if (file-exists-p full-path)
+                      full-path
+                    ;; Sometimes files have no extension in manifest but .webp on disk
+                    (let ((webp-path (concat full-path ".webp")))
+                      (if (file-exists-p webp-path) webp-path nil))))))
+          (error nil))
+
+      ;; METHOD 2: Fallback (Guessing)
+      (let* ((path-no-ext (expand-file-name (number-to-string sticker-id) pack-dir))
+             (path-webp (concat path-no-ext ".webp")))
+        (cond
+         ((file-exists-p path-webp) path-webp)
+         ((file-exists-p path-no-ext) path-no-ext)
+         (t nil))))))
 
 (defun signel-insert-media (attachments sticker)
-  "Robustly insert buttons or inline images for media and stickers."
-
-  ;; --- 1. HANDLE STICKERS ---
+  "Insert buttons or inline images for media and stickers."
+  ;; 1. Handle Stickers
   (when sticker
     (let* ((pack-id (alist-get 'packId sticker))
            (sticker-id (alist-get 'stickerId sticker))
-           (emoji (or (alist-get 'emoji sticker) "🧩"))
+           (emoji (alist-get 'emoji sticker))
            (file (if (and pack-id sticker-id)
                      (signel-find-sticker pack-id sticker-id)
                    nil)))
 
       (insert "\n")
-      (if (and file (image-type-available-p 'imagemagick))
-          ;; If we found the file and Emacs supports ImageMagick (needed for WebP often)
-          (let ((image (create-image file 'imagemagick nil :max-width 150)))
-            (insert-image image))
-        ;; Fallback to text if file missing or no image support
-        (insert (propertize (format "[Sticker %s]" emoji)
-                            'face 'font-lock-constant-face)))))
+      (cond
+       ;; Attempt to render WebP (native in Emacs 29+, or via ImageMagick)
+       ((and file
+             (or (image-type-available-p 'webp)
+                 (image-type-available-p 'imagemagick)))
+        (let ((image (create-image file (if (image-type-available-p 'webp) 'webp 'imagemagick) nil :max-width 150)))
+          (insert-image image)))
+       ;; Fallback text
+       (t
+        (insert (propertize (if emoji (format "[Sticker %s]" emoji) "[Sticker]")
+                            'face 'font-lock-constant-face))))))
 
-  ;; --- 2. HANDLE ATTACHMENTS ---
+  ;; 2. Handle Attachments
   (when attachments
-    ;; Convert vector to list if necessary
     (let ((att-list (if (vectorp attachments) (append attachments nil) attachments)))
-
       (dolist (att att-list)
         (let* ((path (alist-get 'storedFilename att))
                (type (alist-get 'contentType att))
                (name (or (alist-get 'filename att) "attachment")))
 
           (insert "\n")
-
           (cond
-           ;; CASE A: Image exists locally -> Render it
+           ;; A: Inline Image
            ((and path (string-prefix-p "image/" type) (file-exists-p path))
             (let ((image (create-image path nil nil :max-width 400)))
               (insert-image image)))
 
-           ;; CASE B: File exists locally -> Clickable Button
+           ;; B: File Button
            ((and path (file-exists-p path))
             (insert-button (format "[File: %s]" name)
                            'action (lambda (_) (browse-url-of-file path))
                            'face 'link
                            'help-echo (format "Type: %s\nPath: %s" type path)))
 
-           ;; CASE C: File NOT on disk (Try to guess standard path)
+           ;; C: Missing/Not Downloaded
            (t
             (let* ((std-path (expand-file-name (format "~/.local/share/signal-cli/attachments/%s" (alist-get 'id att))))
                    (exists (file-exists-p std-path)))
               (if exists
-                  ;; We found it in the standard folder!
                   (if (string-prefix-p "image/" type)
                       (insert-image (create-image std-path nil nil :max-width 400))
                     (insert-button (format "[File: %s]" name)
                                    'action (lambda (_) (browse-url-of-file std-path))
                                    'face 'link))
-                ;; Still can't find it
                 (insert-button (format "[File: %s (Not Downloaded)]" name)
                                'action (lambda (_) (message "File not found at %s" std-path))
                                'face 'font-lock-comment-face))))))))))
