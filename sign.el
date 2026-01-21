@@ -276,7 +276,89 @@ If signal-cli is not in your $PATH, provide the absolute path here."
             (setq mode-line-process (format " [%s...]" (or source-name source)))))))))
 
 ;; -----------------------------------------------------------------------------
-;; 4. BUFFER & UI MANAGEMENT
+;; 5. MEDIA & STICKERS
+;; -----------------------------------------------------------------------------
+
+(defun signel-find-sticker (pack-id sticker-id)
+  "Try to find the local file for a sticker."
+  (let* ((base-dir (expand-file-name "~/.local/share/signal-cli/stickers/"))
+         (pack-dir (expand-file-name pack-id base-dir))
+         (path-no-ext (expand-file-name (number-to-string sticker-id) pack-dir))
+         (path-webp (concat path-no-ext ".webp")))
+
+    (signel-log "Checking sticker: %s OR %s" path-webp path-no-ext)
+
+    (cond
+     ((file-exists-p path-webp) path-webp)
+     ((file-exists-p path-no-ext) path-no-ext)
+     (t
+      (signel-log "Sticker not found on disk.")
+      nil))))
+
+(defun signel-insert-media (attachments sticker)
+  "Robustly insert buttons or inline images for media and stickers."
+
+  ;; --- 1. HANDLE STICKERS ---
+  (when sticker
+    (let* ((pack-id (alist-get 'packId sticker))
+           (sticker-id (alist-get 'stickerId sticker))
+           (emoji (or (alist-get 'emoji sticker) "🧩"))
+           (file (if (and pack-id sticker-id)
+                     (signel-find-sticker pack-id sticker-id)
+                   nil)))
+
+      (insert "\n")
+      (if (and file (image-type-available-p 'imagemagick))
+          ;; If we found the file and Emacs supports ImageMagick (needed for WebP often)
+          (let ((image (create-image file 'imagemagick nil :max-width 150)))
+            (insert-image image))
+        ;; Fallback to text if file missing or no image support
+        (insert (propertize (format "[Sticker %s]" emoji)
+                            'face 'font-lock-constant-face)))))
+
+  ;; --- 2. HANDLE ATTACHMENTS ---
+  (when attachments
+    ;; Convert vector to list if necessary
+    (let ((att-list (if (vectorp attachments) (append attachments nil) attachments)))
+
+      (dolist (att att-list)
+        (let* ((path (alist-get 'storedFilename att))
+               (type (alist-get 'contentType att))
+               (name (or (alist-get 'filename att) "attachment")))
+
+          (insert "\n")
+
+          (cond
+           ;; CASE A: Image exists locally -> Render it
+           ((and path (string-prefix-p "image/" type) (file-exists-p path))
+            (let ((image (create-image path nil nil :max-width 400)))
+              (insert-image image)))
+
+           ;; CASE B: File exists locally -> Clickable Button
+           ((and path (file-exists-p path))
+            (insert-button (format "[File: %s]" name)
+                           'action (lambda (_) (browse-url-of-file path))
+                           'face 'link
+                           'help-echo (format "Type: %s\nPath: %s" type path)))
+
+           ;; CASE C: File NOT on disk (Try to guess standard path)
+           (t
+            (let* ((std-path (expand-file-name (format "~/.local/share/signal-cli/attachments/%s" (alist-get 'id att))))
+                   (exists (file-exists-p std-path)))
+              (if exists
+                  ;; We found it in the standard folder!
+                  (if (string-prefix-p "image/" type)
+                      (insert-image (create-image std-path nil nil :max-width 400))
+                    (insert-button (format "[File: %s]" name)
+                                   'action (lambda (_) (browse-url-of-file std-path))
+                                   'face 'link))
+                ;; Still can't find it
+                (insert-button (format "[File: %s (Not Downloaded)]" name)
+                               'action (lambda (_) (message "File not found at %s" std-path))
+                               'face 'font-lock-comment-face))))))))))
+
+;; -----------------------------------------------------------------------------
+;; 6. BUFFER & UI MANAGEMENT
 ;; -----------------------------------------------------------------------------
 
 (defvar-local signel-chat-id nil)
@@ -327,30 +409,6 @@ If signal-cli is not in your $PATH, provide the absolute path here."
                         'rear-nonsticky '(read-only face)
                         'front-sticky '(read-only face)))))
 
-(defun signel-insert-media (attachments sticker)
-  "Insert buttons or inline images for media."
-  (when sticker
-    (insert (propertize "[Sticker]" 'face 'font-lock-comment-face)))
-
-  (when attachments
-    (dolist (att attachments)
-      (let* ((path (alist-get 'storedFilename att))
-             (type (alist-get 'contentType att))
-             (name (or (alist-get 'filename att) "attachment")))
-
-        (insert " ")
-        (cond
-         ((and path (string-prefix-p "image/" type) (file-exists-p path))
-          (let ((image (create-image path nil nil :max-width 400)))
-            (insert-image image)))
-         (t
-          (insert-button (format "[File: %s]" name)
-                         'action (lambda (_) (if path
-                                                 (browse-url-of-file path)
-                                               (message "File not available locally")))
-                         'help-echo (format "Type: %s\nPath: %s" type path))))
-        (insert "\n")))))
-
 (defun signel-insert-msg (id name text attachments sticker is-me)
   "Insert text and media into the buffer."
   (with-current-buffer (signel-get-buffer id)
@@ -389,7 +447,7 @@ If signal-cli is not in your $PATH, provide the absolute path here."
       (signel-draw-prompt))))
 
 ;; -----------------------------------------------------------------------------
-;; 5. USER COMMANDS
+;; 7. COMMANDS
 ;; -----------------------------------------------------------------------------
 
 (defun signel-send-input ()
@@ -444,7 +502,7 @@ If signal-cli is not in your $PATH, provide the absolute path here."
     (message "Chat opened.")))
 
 ;; -----------------------------------------------------------------------------
-;; 6. DASHBOARD
+;; 8. DASHBOARD
 ;; -----------------------------------------------------------------------------
 
 (defvar signel-dashboard-mode-map
