@@ -62,10 +62,11 @@
 This must match the account registered with signal-cli."
   :type '(choice (const :tag "Not Set" nil) string))
 
-(defcustom signel-cli-program "signal-cli"
+(defcustom signel-cli-program (or (executable-find "signal-cli") "signal-cli")
   "Path to the signal-cli executable.
-If signal-cli is not in your `exec-path', provide the absolute path here."
-  :type 'string)
+This program is a runtime dependency. If it is in your `exec-path',
+this is automatically set. Otherwise, you must provide the absolute path."
+  :type 'file)
 
 (defcustom signel-data-directory (expand-file-name "~/.local/share/signal-cli")
   "Directory where signal-cli stores data (attachments, stickers, etc.).
@@ -142,6 +143,10 @@ Default on Linux is typically ~/.local/share/signal-cli."
 (defun signel-start ()
   "Start the signal-cli JSON-RPC process."
   (interactive)
+  (unless (executable-find signel-cli-program)
+    (user-error "The signal-cli executable '%s' was not found. Please install it or check
+`signel-cli-program'." signel-cli-program))
+
   (unless signel-account
     (user-error "Variable `signel-account' is not set"))
 
