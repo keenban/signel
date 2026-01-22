@@ -73,6 +73,11 @@ this is automatically set. Otherwise, you must provide the absolute path."
 Default on Linux is typically ~/.local/share/signal-cli."
   :type 'directory)
 
+(defcustom signel-enable-animation t
+  "If non-nil, animate stickers and GIFs in the chat buffer.
+When nil, only the first frame of animated media will be displayed."
+  :type 'boolean)
+
 (defcustom signel-prompt "> "
   "The prompt string displayed in chat buffers."
   :type 'string)
@@ -392,7 +397,7 @@ Returns the path to the temporary GIF.  Uses `unwind-protect' to ensure cleanup.
             (if image
                 (progn
                   (insert-image image)
-                  (when (fboundp 'image-animate)
+                  (when (and signel-enable-animation (fboundp 'image-animate))
                     (image-animate image nil t))) ;; Loop forever
               ;; Render failed
               (insert (propertize (format "[Sticker %s (Render Failed)]" emoji)
@@ -415,7 +420,7 @@ Returns the path to the temporary GIF.  Uses `unwind-protect' to ensure cleanup.
            ((and path (string-prefix-p "image/" type) (file-exists-p path))
             (let ((image (create-image path nil nil :max-width 400)))
               (insert-image image)
-              (when (and (fboundp 'image-animate) (image-multi-frame-p image))
+              (when (and signel-enable-animation (fboundp 'image-animate) (image-multi-frame-p image))
                 (image-animate image nil t))))
            ;; B: File Button
            ((and path (file-exists-p path))
@@ -432,7 +437,7 @@ Returns the path to the temporary GIF.  Uses `unwind-protect' to ensure cleanup.
                   (if (string-prefix-p "image/" type)
                       (let ((image (create-image std-path nil nil :max-width 400)))
                         (insert-image image)
-                        (when (and (fboundp 'image-animate) (image-multi-frame-p image))
+                        (when (and signel-enable-animation (fboundp 'image-animate) (image-multi-frame-p image))
                           (image-animate image nil t)))
                     (insert-button (format "[File: %s]" name)
                                    'action (lambda (_) (browse-url-of-file std-path))
