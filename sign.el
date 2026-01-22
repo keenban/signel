@@ -100,30 +100,30 @@ Default on Linux is typically ~/.local/share/signal-cli."
 
 ;;; Internal State
 
-(defconst signel-process-name "signal-rpc"
+(defconst signel--process-name "signal-rpc"
   "Internal name for the signal-cli process.")
 
-(defconst signel-buffer-stderr " *signel-stderr*"
+(defconst signel--buffer-stderr " *signel-stderr*"
   "Name of the hidden buffer used for process stderr.")
 
-(defvar signel-rpc-id-counter 0
+(defvar signel--rpc-id-counter 0
   "Counter for JSON-RPC request IDs.")
 
-(defvar signel-request-buffer-map (make-hash-table :test 'equal)
+(defvar signel--request-buffer-map (make-hash-table :test 'equal)
   "Mapping of RPC ID to buffer name for error reporting.")
 
-(defvar signel-contact-map (make-hash-table :test 'equal)
+(defvar signel--contact-map (make-hash-table :test 'equal)
   "Cache of phone numbers to display names.")
 
-(defvar signel-active-chats (make-hash-table :test 'equal)
+(defvar signel--active-chats (make-hash-table :test 'equal)
   "Set of currently active chat IDs.")
 
-(defvar signel-partial-line ""
+(defvar signel--partial-line ""
   "Buffer string for incomplete JSON lines received from the process.")
 
 ;;; Logging
 
-(defun signel-log (fmt &rest args)
+(defun signel--log (fmt &rest args)
   "Log debug info to *signel-log* using FMT and ARGS."
   (with-current-buffer (get-buffer-create "*signel-log*")
     (goto-char (point-max))
@@ -145,99 +145,99 @@ Default on Linux is typically ~/.local/share/signal-cli."
   (unless signel-account
     (user-error "Variable `signel-account' is not set"))
 
-  (when (get-process signel-process-name)
-    (delete-process signel-process-name))
+  (when (get-process signel--process-name)
+    (delete-process signel--process-name))
 
   ;; State cleanup
-  (setq signel-partial-line "")
-  (clrhash signel-request-buffer-map)
+  (setq signel--partial-line "")
+  (clrhash signel--request-buffer-map)
 
   (let ((proc (make-process
-               :name signel-process-name
-               :buffer signel-buffer-stderr
+               :name signel--process-name
+               :buffer signel--buffer-stderr
                :command (list signel-cli-program "-a" signel-account "jsonRpc")
-               :filter #'signel-process-filter
-               :sentinel #'signel-process-sentinel
+               :filter #'signel--process-filter
+               :sentinel #'signel--process-sentinel
                :coding 'utf-8-unix)))
     (set-process-query-on-exit-flag proc nil)
-    (signel-log "Signel service started.")
+    (signel--log "Signel service started.")
     (message "Signel service started.")))
 
 (defun signel-stop ()
   "Stop the Signel service."
   (interactive)
-  (when (get-process signel-process-name)
-    (delete-process signel-process-name)
+  (when (get-process signel--process-name)
+    (delete-process signel--process-name)
     (message "Signel service stopped.")))
 
-(defun signel-send-rpc (method params &optional target-buffer)
+(defun signel--send-rpc (method params &optional target-buffer)
   "Send a JSON-RPC payload with METHOD and PARAMS.
 If TARGET-BUFFER is non-nil, map the request ID to that buffer for error handling."
-  (unless (get-process signel-process-name)
+  (unless (get-process signel--process-name)
     (error "Signel service not running. M-x signel-start"))
-  (let* ((id (cl-incf signel-rpc-id-counter))
+  (let* ((id (cl-incf signel--rpc-id-counter))
          (req `((jsonrpc . "2.0")
                 (method . ,method)
                 (params . ,params)
                 (id . ,id)))
          (json-str (json-encode req)))
     (when target-buffer
-      (puthash id (buffer-name target-buffer) signel-request-buffer-map))
-    (signel-log "SEND: %s" json-str)
-    (process-send-string signel-process-name (concat json-str "\n"))
+      (puthash id (buffer-name target-buffer) signel--request-buffer-map))
+    (signel--log "SEND: %s" json-str)
+    (process-send-string signel--process-name (concat json-str "\n"))
     id))
 
 ;;; Parsing & Dispatch
 
-(defun signel-process-filter (_proc string)
+(defun signel--process-filter (_proc string)
   "Accumulate output from _PROC and parse complete JSON objects from STRING."
-  (setq signel-partial-line (concat signel-partial-line string))
+  (setq signel--partial-line (concat signel--partial-line string))
   ;; DoS Protection: Reset buffer if it gets suspiciously large without a newline
-  (when (> (length signel-partial-line) 100000)
-    (setq signel-partial-line "")
-    (signel-log "WARNING: Buffer overflow protection triggered. Dropped data."))
+  (when (> (length signel--partial-line) 100000)
+    (setq signel--partial-line "")
+    (signel--log "WARNING: Buffer overflow protection triggered. Dropped data."))
 
-  (let ((lines (split-string signel-partial-line "\n")))
-    (if (string-suffix-p "\n" signel-partial-line)
-        (setq signel-partial-line "")
-      (setq signel-partial-line (car (last lines)))
+  (let ((lines (split-string signel--partial-line "\n")))
+    (if (string-suffix-p "\n" signel--partial-line)
+        (setq signel--partial-line "")
+      (setq signel--partial-line (car (last lines)))
       (setq lines (butlast lines)))
 
     (dolist (line lines)
       (setq line (string-trim line))
       (when (and (not (string-empty-p line)) (string-prefix-p "{" line))
-        (signel-log "RECV: %s" line)
+        (signel--log "RECV: %s" line)
         (condition-case err
             (let ((json (json-read-from-string line)))
-              (signel-dispatch json))
-          (error (signel-log "JSON Error: %s" err)))))))
+              (signel--dispatch json))
+          (error (signel--log "JSON Error: %s" err)))))))
 
-(defun signel-process-sentinel (_proc event)
+(defun signel--process-sentinel (_proc event)
   "Log process EVENT for debugging."
-  (signel-log "Process Event: %s" event)
+  (signel--log "Process Event: %s" event)
   (when (string-prefix-p "exited" event)
     (message "Signel process exited.")))
 
-(defun signel-dispatch (json)
+(defun signel--dispatch (json)
   "Dispatch JSON object to appropriate handler."
   (let ((method (alist-get 'method json))
         (error-obj (alist-get 'error json))
         (id (alist-get 'id json))
         (params (alist-get 'params json)))
     (cond
-     ((string= method "receive") (signel-handle-receive params))
-     (error-obj (signel-handle-error id error-obj)))))
+     ((string= method "receive") (signel--handle-receive params))
+     (error-obj (signel--handle-error id error-obj)))))
 
-(defun signel-handle-error (id error-obj)
+(defun signel--handle-error (id error-obj)
   "Handle RPC errors for request ID using ERROR-OBJ."
-  (let* ((buf-name (gethash id signel-request-buffer-map))
+  (let* ((buf-name (gethash id signel--request-buffer-map))
          (msg (alist-get 'message error-obj)))
-    (signel-log "RPC Error [%s]: %s" id msg)
+    (signel--log "RPC Error [%s]: %s" id msg)
     (when (and buf-name (get-buffer buf-name))
       (with-current-buffer buf-name
-        (signel-insert-system-msg (format "ERROR: %s" msg) 'signel-error-face)))))
+        (signel--insert-system-msg (format "ERROR: %s" msg) 'signel-error-face)))))
 
-(defun signel-handle-receive (params)
+(defun signel--handle-receive (params)
   "Handle new messages, attachments, stickers, and sync events from PARAMS."
   (let* ((envelope (alist-get 'envelope params))
          (source (or (alist-get 'sourceNumber envelope) (alist-get 'source envelope)))
@@ -248,12 +248,12 @@ If TARGET-BUFFER is non-nil, map the request ID to that buffer for error handlin
          (group-info (alist-get 'groupInfo data)))
 
     (when (and source source-name)
-      (puthash source source-name signel-contact-map))
+      (puthash source source-name signel--contact-map))
 
     (let ((chat-id (if group-info (alist-get 'groupId group-info) source)))
       (when chat-id
-        (puthash chat-id t signel-active-chats)
-        (signel-dashboard-refresh)
+        (puthash chat-id t signel--active-chats)
+        (signel--dashboard-refresh)
 
         ;; 1. Incoming Data (Text OR Attachments)
         (when data
@@ -263,7 +263,7 @@ If TARGET-BUFFER is non-nil, map the request ID to that buffer for error handlin
                 (sender (or source-name source)))
 
             (when (or msg-text attachments sticker)
-              (signel-insert-msg chat-id sender msg-text attachments sticker nil)
+              (signel--insert-msg chat-id sender msg-text attachments sticker nil)
 
               ;; Notify
               (let ((notify-body (cond (msg-text msg-text)
@@ -274,7 +274,7 @@ If TARGET-BUFFER is non-nil, map the request ID to that buffer for error handlin
                                       :body notify-body))
 
               (when signel-auto-open-buffer
-                (display-buffer (signel-get-buffer chat-id))))))
+                (display-buffer (signel--get-buffer chat-id))))))
 
         ;; 2. Sync (My sent messages)
         (when sync
@@ -284,16 +284,16 @@ If TARGET-BUFFER is non-nil, map the request ID to that buffer for error handlin
                  (attachments (alist-get 'attachments sent))
                  (sticker (alist-get 'sticker sent)))
             (when (and dest (or msg-text attachments sticker))
-              (signel-insert-msg dest "Me" msg-text attachments sticker t))))
+              (signel--insert-msg dest "Me" msg-text attachments sticker t))))
 
         ;; 3. Typing
         (when (and typing (string= "STARTED" (alist-get 'action typing)))
-          (with-current-buffer (signel-get-buffer chat-id)
+          (with-current-buffer (signel--get-buffer chat-id)
             (setq mode-line-process (format " [%s...]" (or source-name source)))))))))
 
 ;;; Media & Stickers
 
-(defun signel-find-sticker (pack-id sticker-id)
+(defun signel--find-sticker (pack-id sticker-id)
   "Find the local sticker file for PACK-ID and STICKER-ID using manifest.json."
   (let* ((base-dir (expand-file-name "stickers/" signel-data-directory))
          (pack-dir (expand-file-name pack-id base-dir))
@@ -318,7 +318,7 @@ If TARGET-BUFFER is non-nil, map the request ID to that buffer for error handlin
          ((file-exists-p path-no-ext) path-no-ext)
          (t nil))))))
 
-(defun signel-guess-image-type (file)
+(defun signel--guess-image-type (file)
   "Read the first few bytes of FILE to determine image type (png, webp, gif)."
   (with-temp-buffer
     (set-buffer-multibyte nil)
@@ -332,7 +332,7 @@ If TARGET-BUFFER is non-nil, map the request ID to that buffer for error handlin
       'webp)
      (t nil))))
 
-(defun signel-convert-apng-to-gif (file)
+(defun signel--convert-apng-to-gif (file)
   "Convert APNG FILE to a temporary GIF using ImageMagick `convert'.
 Returns the path to the temporary GIF.  Uses `unwind-protect' to ensure cleanup."
   (let ((tmp-gif (make-temp-file "signel-sticker-" nil ".gif")))
@@ -344,15 +344,15 @@ Returns the path to the temporary GIF.  Uses `unwind-protect' to ensure cleanup.
                                   "-coalesce"
                                   tmp-gif))
               tmp-gif
-            (signel-log "Failed to convert APNG to GIF. `convert' exit code non-zero.")
+            (signel--log "Failed to convert APNG to GIF. `convert' exit code non-zero.")
             ;; Cleanup failed file if it was created
             (when (file-exists-p tmp-gif) (delete-file tmp-gif))
             nil))
-      (signel-log "ImageMagick `convert' not found. Cannot animate APNG.")
+      (signel--log "ImageMagick `convert' not found. Cannot animate APNG.")
       (when (file-exists-p tmp-gif) (delete-file tmp-gif))
       nil)))
 
-(defun signel-insert-media (attachments sticker)
+(defun signel--insert-media (attachments sticker)
   "Insert buttons or inline images for ATTACHMENTS and STICKER with animation support."
   ;; 1. Handle Stickers
   (when sticker
@@ -360,19 +360,19 @@ Returns the path to the temporary GIF.  Uses `unwind-protect' to ensure cleanup.
            (sticker-id (alist-get 'stickerId sticker))
            (emoji (or (alist-get 'emoji sticker) "🧩"))
            (file (if (and pack-id sticker-id)
-                     (signel-find-sticker pack-id sticker-id)
+                     (signel--find-sticker pack-id sticker-id)
                    nil)))
       (insert "\n")
       (cond
        ((and file (file-exists-p file))
-        (let* ((type (signel-guess-image-type file))
+        (let* ((type (signel--guess-image-type file))
                (final-file file)
                (final-type type)
                (converted nil))
 
           ;; CONVERSION LOGIC: If PNG (APNG), try to convert to GIF
           (when (and (eq type 'png) (executable-find "convert"))
-            (let ((gif (signel-convert-apng-to-gif file)))
+            (let ((gif (signel--convert-apng-to-gif file)))
               (when gif
                 (setq final-file gif)
                 (setq final-type 'gif)
@@ -438,15 +438,15 @@ Returns the path to the temporary GIF.  Uses `unwind-protect' to ensure cleanup.
 
 ;;; Buffer & UI Management
 
-(defvar-local signel-chat-id nil
+(defvar-local signel--chat-id nil
   "The Signal recipient ID associated with the current buffer.")
 
-(defvar-local signel-input-marker nil
+(defvar-local signel--input-marker nil
   "Marker indicating the start of the editable input area.")
 
-(defun signel-guard-cursor ()
+(defun signel--guard-cursor ()
   "Ensure cursor stays in the editable prompt area."
-  (let ((limit (if signel-input-marker (marker-position signel-input-marker) (point-min))))
+  (let ((limit (if signel--input-marker (marker-position signel--input-marker) (point-min))))
     (when (< (point) limit)
       (goto-char limit))))
 
@@ -456,14 +456,14 @@ Returns the path to the temporary GIF.  Uses `unwind-protect' to ensure cleanup.
   (visual-line-mode 1)
 
   ;; Setup Input Marker
-  (setq signel-input-marker (make-marker))
+  (setq signel--input-marker (make-marker))
 
-  (add-hook 'post-command-hook #'signel-guard-cursor nil t)
-  (local-set-key (kbd "RET") #'signel-send-input)
-  (local-set-key (kbd "C-c C-c") #'signel-send-input)
+  (add-hook 'post-command-hook #'signel--guard-cursor nil t)
+  (local-set-key (kbd "RET") #'signel--send-input)
+  (local-set-key (kbd "C-c C-c") #'signel--send-input)
   (local-set-key (kbd "C-c C-a") #'signel-attach-file))
 
-(defun signel-get-buffer (id)
+(defun signel--get-buffer (id)
   "Get or create a chat buffer for ID."
   (let* ((buf-name (format "*Signel: %s*" id))
          (buffer (get-buffer buf-name)))
@@ -471,11 +471,11 @@ Returns the path to the temporary GIF.  Uses `unwind-protect' to ensure cleanup.
       (setq buffer (get-buffer-create buf-name))
       (with-current-buffer buffer
         (signel-chat-mode)
-        (setq signel-chat-id id)
-        (signel-draw-prompt)))
+        (setq signel--chat-id id)
+        (signel--draw-prompt)))
     buffer))
 
-(defun signel-draw-prompt ()
+(defun signel--draw-prompt ()
   "Draw the input prompt and update the input marker."
   (let ((inhibit-read-only t))
     (goto-char (point-max))
@@ -485,18 +485,18 @@ Returns the path to the temporary GIF.  Uses `unwind-protect' to ensure cleanup.
                         'rear-nonsticky '(read-only face)
                         'front-sticky '(read-only face)))
     ;; Update the marker to the end of the prompt
-    (set-marker signel-input-marker (point))))
+    (set-marker signel--input-marker (point))))
 
-(defun signel-insert-msg (id name text attachments sticker is-me)
+(defun signel--insert-msg (id name text attachments sticker is-me)
   "Insert text and media into the buffer for chat ID.
 NAME is the sender, TEXT is the content, ATTACHMENTS and STICKER contain
 media data, and IS-ME is non-nil if the message is from the user."
-  (with-current-buffer (signel-get-buffer id)
+  (with-current-buffer (signel--get-buffer id)
     (let ((inhibit-read-only t)
           (name-face (if is-me 'signel-my-msg-face 'signel-other-msg-face)))
       (save-excursion
         ;; Move to just before the prompt
-        (goto-char (marker-position signel-input-marker))
+        (goto-char (marker-position signel--input-marker))
         (forward-line 0) ;; Ensure we are at start of prompt line (usually empty above)
 
         ;; If the previous line isn't a newline, insert one
@@ -511,24 +511,24 @@ media data, and IS-ME is non-nil if the message is from the user."
         (when text (insert text))
         (when (or attachments sticker)
           (when text (insert "\n"))
-          (signel-insert-media attachments sticker))
+          (signel--insert-media attachments sticker))
         (insert "\n")
 
         ;; Redraw Prompt at the new bottom
-        (signel-draw-prompt)))
+        (signel--draw-prompt)))
 
-    (let ((win (get-buffer-window (signel-get-buffer id))))
+    (let ((win (get-buffer-window (signel--get-buffer id))))
       (when win (set-window-point win (point-max))))))
 
-(defun signel-insert-system-msg (text face)
+(defun signel--insert-system-msg (text face)
   "Insert a system message with TEXT using FACE."
   (let ((inhibit-read-only t))
     (save-excursion
-      (goto-char (if signel-input-marker (marker-position signel-input-marker) (point-max)))
+      (goto-char (if signel--input-marker (marker-position signel--input-marker) (point-max)))
       (forward-line 0)
       (delete-region (point) (point-max))
       (insert (propertize (concat "*** " text "\n") 'face face))
-      (signel-draw-prompt))))
+      (signel--draw-prompt))))
 
 ;;; Interactive Commands
 
@@ -538,47 +538,47 @@ Returns nil if ID is a phone number (+) or UUID (contains -)."
   (not (or (string-prefix-p "+" id)
            (string-match-p "-" id))))
 
-(defun signel-send-input ()
+(defun signel--send-input ()
   "Send the input from the prompt to the current chat."
   (interactive)
-  (let* ((start (marker-position signel-input-marker))
+  (let* ((start (marker-position signel--input-marker))
          (end (point-max))
          (text (string-trim (buffer-substring-no-properties start end))))
     (unless (string-empty-p text)
       (let ((inhibit-read-only t))
         (delete-region start end))
 
-      (let ((is-group (signel--is-group-id signel-chat-id))
+      (let ((is-group (signel--is-group-id signel--chat-id))
             (params `((message . ,text))))
         (if is-group
-            (push `(groupId . ,signel-chat-id) params)
-          (push `(recipient . [,signel-chat-id]) params))
-        (signel-send-rpc "send" params (current-buffer)))
+            (push `(groupId . ,signel--chat-id) params)
+          (push `(recipient . [,signel--chat-id]) params))
+        (signel--send-rpc "send" params (current-buffer)))
 
-      (signel-insert-msg signel-chat-id "Me" text nil nil t))))
+      (signel--insert-msg signel--chat-id "Me" text nil nil t))))
 
 ;;;###autoload
 (defun signel-attach-file (file-path)
   "Send FILE-PATH as an attachment to the current chat."
   (interactive "fAttachment: ")
-  (unless signel-chat-id
+  (unless signel--chat-id
     (user-error "Not in a Signal chat buffer"))
   (let* ((full-path (expand-file-name file-path))
-         (is-group (signel--is-group-id signel-chat-id))
+         (is-group (signel--is-group-id signel--chat-id))
          (params `((attachments . [,full-path]))))
     (if is-group
-        (push `(groupId . ,signel-chat-id) params)
-      (push `(recipient . [,signel-chat-id]) params))
-    (signel-send-rpc "send" params (current-buffer))
-    (signel-insert-msg signel-chat-id "Me"
-                       (format "[Sending: %s]" (file-name-nondirectory full-path))
-                       nil nil t)))
+        (push `(groupId . ,signel--chat-id) params)
+      (push `(recipient . [,signel--chat-id]) params))
+    (signel--send-rpc "send" params (current-buffer))
+    (signel--insert-msg signel--chat-id "Me"
+                        (format "[Sending: %s]" (file-name-nondirectory full-path))
+                        nil nil t)))
 
 ;;;###autoload
 (defun signel-chat (recipient)
   "Open a chat buffer for RECIPIENT (phone number or group ID)."
   (interactive "sSignal Recipient (+Phone): ")
-  (let ((buffer (signel-get-buffer recipient)))
+  (let ((buffer (signel--get-buffer recipient)))
     (switch-to-buffer buffer)
     (message "Chat opened.")))
 
@@ -587,39 +587,39 @@ Returns nil if ID is a phone number (+) or UUID (contains -)."
 (defvar signel-dashboard-mode-map
   (let ((map (make-sparse-keymap)))
     (set-keymap-parent map special-mode-map)
-    (define-key map (kbd "RET") #'signel-dashboard-open-entry)
+    (define-key map (kbd "RET") #'signel--dashboard-open-entry)
     (define-key map (kbd "n") #'forward-button)
     (define-key map (kbd "p") #'backward-button)
-    (define-key map (kbd "g") #'signel-dashboard-refresh)
+    (define-key map (kbd "g") #'signel--dashboard-refresh)
     map)
   "Keymap for `signel-dashboard-mode'.")
 
 (define-derived-mode signel-dashboard-mode special-mode "Signel List"
   "Major mode for the list of active Signal chats.")
 
-(defun signel-dashboard-draw ()
+(defun signel--dashboard-draw ()
   "Redraw the dashboard content."
   (let ((inhibit-read-only t))
     (erase-buffer)
     (insert "Active Chats:\n")
     (insert "-------------\n")
     (maphash (lambda (id _)
-               (let ((name (gethash id signel-contact-map id)))
+               (let ((name (gethash id signel--contact-map id)))
                  (insert-button (format "%s (%s)" name id)
-                                'action #'signel-dashboard-open-entry
+                                'action #'signel--dashboard-open-entry
                                 'signel-id id
                                 'follow-link t)
                  (insert "\n")))
-             signel-active-chats)))
+             signel--active-chats)))
 
-(defun signel-dashboard-refresh ()
+(defun signel--dashboard-refresh ()
   "Refresh the dashboard buffer."
   (interactive)
   (let ((buf (get-buffer "*Signel List*")))
     (when (buffer-live-p buf)
       (with-current-buffer buf
         (let ((line (line-number-at-pos)))
-          (signel-dashboard-draw)
+          (signel--dashboard-draw)
           (goto-char (point-min))
           (forward-line (1- line)))))))
 
@@ -630,10 +630,10 @@ Returns nil if ID is a phone number (+) or UUID (contains -)."
   (let ((buf (get-buffer-create "*Signel List*")))
     (with-current-buffer buf
       (signel-dashboard-mode)
-      (signel-dashboard-draw))
+      (signel--dashboard-draw))
     (switch-to-buffer buf)))
 
-(defun signel-dashboard-open-entry (&optional btn)
+(defun signel--dashboard-open-entry (&optional btn)
   "Open chat for the button at point or BTN."
   (interactive)
   (let* ((button (or btn (button-at (point))))
