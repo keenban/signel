@@ -67,6 +67,11 @@ This must match the account registered with signal-cli."
 If signal-cli is not in your `exec-path', provide the absolute path here."
   :type 'string)
 
+(defcustom signel-data-directory (expand-file-name "~/.local/share/signal-cli")
+  "Directory where signal-cli stores data (attachments, stickers, etc.).
+Default on Linux is typically ~/.local/share/signal-cli."
+  :type 'directory)
+
 (defcustom signel-prompt "> "
   "The prompt string displayed in chat buffers."
   :type 'string)
@@ -290,7 +295,7 @@ If TARGET-BUFFER is non-nil, map the request ID to that buffer for error handlin
 
 (defun signel-find-sticker (pack-id sticker-id)
   "Find the local sticker file for PACK-ID and STICKER-ID using manifest.json."
-  (let* ((base-dir (expand-file-name "~/.local/share/signal-cli/stickers/"))
+  (let* ((base-dir (expand-file-name "stickers/" signel-data-directory))
          (pack-dir (expand-file-name pack-id base-dir))
          (manifest-file (expand-file-name "manifest.json" pack-dir)))
     (if (file-exists-p manifest-file)
@@ -415,7 +420,8 @@ Returns the path to the temporary GIF.  Uses `unwind-protect' to ensure cleanup.
                            'help-echo (format "Type: %s\nPath: %s" type path)))
            ;; C: Missing/Not Downloaded
            (t
-            (let* ((std-path (expand-file-name (format "~/.local/share/signal-cli/attachments/%s" (alist-get 'id att))))
+            (let* ((att-id (alist-get 'id att))
+                   (std-path (expand-file-name (format "attachments/%s" att-id) signel-data-directory))
                    (exists (file-exists-p std-path)))
               (if exists
                   (if (string-prefix-p "image/" type)
