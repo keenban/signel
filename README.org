@@ -1,4 +1,5 @@
 * Signel
+[[https://www.gnu.org/licenses/gpl-3.0][file:https://img.shields.io/badge/License-GPLv3-blue.svg]] [[https://melpa.org/#/signel][file:https://melpa.org/packages/signel-badge.svg]]
 
 Signel is an Emacs interface for [[https://signal.org][Signal]]. It communicates with a running
 ~signal-cli~ daemon via JSON-RPC to send and receive messages.
@@ -28,14 +29,23 @@ signal-cli link -n "emacs-client" | xargs -n 1 qrencode -t utf8
 #+end_src
 
 ** Installation
+~signel~ is available on [[https://melpa.org][MELPA]].
 
-Clone the repository and add it to your load path.
+You can install ~signel~ with the following command.
+
+#+begin_src
+M-x package-install RET signel RET
+#+end_src
+
+For a basic configuration, place this in your ~user-init-file~
+
+#+begin_src emacs-lisp
+(setq signel-account "+15550000000")
+#+end_src
 
 *** use-package
-
-#+begin_src elisp
+#+begin_src emacs-lisp
 (use-package signel
-  :load-path "~/.emacs.d/site-lisp/signel" ;; Adjust path as needed
   :config
   ;; REQUIRED: Your registered phone number
   (setq signel-account "+15550000000")
