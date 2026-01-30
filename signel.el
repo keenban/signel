@@ -1,4 +1,4 @@
-;;; signel.el --- Signal client for Emacs via signal-cli JSON-RPC  -*- lexical-binding: t; -*-
+;;; signel.el --- Signal client via signal-cli JSON-RPC  -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2026 Keenan Salandy
 
